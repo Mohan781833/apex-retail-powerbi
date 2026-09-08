@@ -1,110 +1,243 @@
-// Meridian HR Dashboard — DAX measures
+// Apex Retail Group — DAX measures (all VAR...RETURN)
 // All measures live in the dedicated Measures table.
 
-// ---------- Calculated columns (Employees) ----------
+// ---------- Calculated columns (Stores) ----------
 
-IsActive = Employees[employment_status] = "Active"
+Store Age = YEAR( TODAY() ) - Stores[opening_year]
 
-TenureBand =
-SWITCH(TRUE(),
-    Employees[tenure_years] < 1, "Under 1 year",
-    Employees[tenure_years] < 3, "1 to 3 years",
-    Employees[tenure_years] < 5, "3 to 5 years",
-    Employees[tenure_years] < 10, "5 to 10 years",
-    "10 plus years"
+Size Band =
+SWITCH( TRUE(),
+    Stores[sq_footage] < 2000, "Small",
+    Stores[sq_footage] < 4000, "Medium",
+    "Large"
 )
-
-SalaryBand =
-SWITCH(TRUE(),
-    Employees[salary_gbp] < 25000, "Under 25k",
-    Employees[salary_gbp] < 35000, "25k to 35k",
-    Employees[salary_gbp] < 50000, "35k to 50k",
-    Employees[salary_gbp] < 75000, "50k to 75k",
-    "75k plus"
-)
-
-IsManager =
-IF(Employees[job_level] IN {"Manager", "Senior Manager", "Director"}, TRUE(), FALSE())
 
 // ---------- Date table ----------
 
 DateTable =
 ADDCOLUMNS(
-    CALENDAR(DATE(2022,1,1), DATE(2025,12,31)),
+    CALENDAR( DATE(2023,1,1), DATE(2024,12,31) ),
     "Year", YEAR([Date]),
-    "MonthNum", MONTH([Date]),
-    "MonthName", FORMAT([Date], "MMMM"),
-    "MonthShort", FORMAT([Date], "MMM"),
+    "Month Num", MONTH([Date]),
+    "Month Name", FORMAT([Date], "MMMM"),
+    "Month Short", FORMAT([Date], "MMM"),
+    "Month Year", FORMAT([Date], "MMM YYYY"),
     "Quarter", "Q" & QUARTER([Date]),
-    "YearMonth", FORMAT([Date], "YYYY-MM")
+    "Year Quarter", YEAR([Date]) & " Q" & QUARTER([Date]),
+    "Year Month", FORMAT([Date], "YYYY-MM"),
+    "Is Current Year", IF( YEAR([Date]) = YEAR(TODAY()), TRUE(), FALSE() )
 )
 
-// ---------- Workforce ----------
+// ---------- Foundation ----------
 
-Active Headcount = COUNTROWS(FILTER(Employees, Employees[IsActive] = TRUE()))
+Total Revenue =
+VAR vRev = SUM( Sales[revenue_gbp] )
+RETURN vRev
 
-Total Headcount = COUNTROWS(Employees)
+Total Cost =
+VAR vCost = SUM( Sales[cost_gbp] )
+RETURN vCost
 
-Attrition Rate % =
-DIVIDE(
-    COUNTROWS(FILTER(Employees, Employees[IsActive] = FALSE())),
-    [Total Headcount],
-    0
+Gross Profit =
+VAR vRevenue = [Total Revenue]
+VAR vCost = [Total Cost]
+RETURN vRevenue - vCost
+
+Gross Margin % =
+VAR vRevenue = [Total Revenue]
+VAR vProfit = [Gross Profit]
+RETURN IF( vRevenue = 0, BLANK(), DIVIDE( vProfit, vRevenue ) )
+
+Total Discount =
+VAR vDiscount = SUM( Sales[discount_gbp] )
+RETURN vDiscount
+
+Discount Rate % =
+VAR vRevenue = [Total Revenue]
+VAR vDiscount = [Total Discount]
+RETURN IF( vRevenue = 0, BLANK(), DIVIDE( vDiscount, vRevenue ) )
+
+Total Units =
+VAR vUnits = SUM( Sales[units_sold] )
+RETURN vUnits
+
+Total Transactions =
+VAR vTxn = SUM( Sales[transactions] )
+RETURN vTxn
+
+Avg Basket Size =
+VAR vRevenue = [Total Revenue]
+VAR vTxn = [Total Transactions]
+RETURN IF( vTxn = 0, BLANK(), DIVIDE( vRevenue, vTxn ) )
+
+Revenue per Sq Ft =
+VAR vRevenue = [Total Revenue]
+VAR vSqFt = SUM( Stores[sq_footage] )
+RETURN IF( vSqFt = 0, BLANK(), DIVIDE( vRevenue, vSqFt ) )
+
+// ---------- Targets (USERELATIONSHIP) ----------
+
+Revenue Target =
+VAR vTarget =
+    CALCULATE(
+        SUM( Targets[revenue_target_gbp] ),
+        USERELATIONSHIP( DateTable[Date], Targets[target_month] )
+    )
+RETURN vTarget
+
+Variance to Target =
+VAR vRevenue = [Total Revenue]
+VAR vTarget = [Revenue Target]
+RETURN IF( ISBLANK( vTarget ), BLANK(), vRevenue - vTarget )
+
+Variance to Target % =
+VAR vVariance = [Variance to Target]
+VAR vTarget = [Revenue Target]
+RETURN IF( ISBLANK( vTarget ), BLANK(), DIVIDE( vVariance, vTarget ) )
+
+// ---------- Time intelligence ----------
+
+Revenue YTD =
+VAR vYTD = TOTALYTD( [Total Revenue], DateTable[Date] )
+RETURN vYTD
+
+Revenue SPLY =
+VAR vSPLY = CALCULATE( [Total Revenue], SAMEPERIODLASTYEAR( DateTable[Date] ) )
+RETURN vSPLY
+
+Revenue vs SPLY % =
+VAR vRevenue = [Total Revenue]
+VAR vSPLY = [Revenue SPLY]
+RETURN IF( ISBLANK( vSPLY ), BLANK(), DIVIDE( vRevenue - vSPLY, vSPLY ) )
+
+Gross Profit YTD =
+VAR vYTD = TOTALYTD( [Gross Profit], DateTable[Date] )
+RETURN vYTD
+
+Gross Margin % SPLY =
+VAR vMarginSPLY = CALCULATE( [Gross Margin %], SAMEPERIODLASTYEAR( DateTable[Date] ) )
+RETURN vMarginSPLY
+
+Revenue Rolling 3M =
+VAR vLastDate = MAX( DateTable[Date] )
+VAR vResult =
+    CALCULATE(
+        AVERAGE( Sales[revenue_gbp] ),
+        DATESINPERIOD( DateTable[Date], vLastDate, -3, MONTH )
+    )
+RETURN vResult
+
+Revenue Prior Month =
+VAR vPriorMonth = CALCULATE( [Total Revenue], DATEADD( DateTable[Date], -1, MONTH ) )
+RETURN vPriorMonth
+
+Revenue MoM % Change =
+VAR vCurrent = [Total Revenue]
+VAR vPrior = [Revenue Prior Month]
+RETURN IF( ISBLANK( vPrior ), BLANK(), DIVIDE( vCurrent - vPrior, vPrior ) )
+
+Revenue Cumulative =
+VAR vMaxDate = MAX( DateTable[Date] )
+VAR vResult =
+    CALCULATE( [Total Revenue], DateTable[Date] <= vMaxDate, ALL( DateTable ) )
+RETURN vResult
+
+// ---------- Ranking and benchmarking ----------
+
+Store Revenue Rank (Company) =
+VAR vRevenue = [Total Revenue]
+RETURN
+    IF( ISBLANK( vRevenue ), BLANK(),
+        RANKX( ALL( Stores ), [Total Revenue], vRevenue, DESC, DENSE ) )
+
+Store Margin Rank (Company) =
+VAR vMargin = [Gross Margin %]
+RETURN
+    IF( ISBLANK( vMargin ), BLANK(),
+        RANKX( ALL( Stores ), [Gross Margin %], vMargin, DESC, DENSE ) )
+
+Store Revenue Rank (Region) =
+VAR vRevenue = [Total Revenue]
+RETURN
+    IF( ISBLANK( vRevenue ), BLANK(),
+        RANKX( ALLEXCEPT( Stores, Stores[region] ), [Total Revenue], vRevenue, DESC, DENSE ) )
+
+Region Avg Revenue =
+VAR vRegionTotal = CALCULATE( [Total Revenue], ALLEXCEPT( Stores, Stores[region] ) )
+VAR vRegionStoreCount = CALCULATE( DISTINCTCOUNT( Stores[store_id] ), ALLEXCEPT( Stores, Stores[region] ) )
+RETURN IF( vRegionStoreCount = 0, BLANK(), DIVIDE( vRegionTotal, vRegionStoreCount ) )
+
+vs Region Avg % =
+VAR vRevenue = [Total Revenue]
+VAR vRegionAvg = [Region Avg Revenue]
+RETURN IF( ISBLANK( vRegionAvg ), BLANK(), DIVIDE( vRevenue - vRegionAvg, vRegionAvg ) )
+
+Is Bottom Quartile (Region) =
+VAR vRank = [Store Revenue Rank (Region)]
+VAR vStoreCount = CALCULATE( DISTINCTCOUNT( Stores[store_id] ), ALLEXCEPT( Stores, Stores[region] ) )
+VAR vQuartileThreshold = CEILING( vStoreCount * 0.25, 1 )
+RETURN IF( vRank >= vStoreCount - vQuartileThreshold + 1, TRUE(), FALSE() )
+
+// AI-written (Section G, Task 3) — verified: sums to 100% within each region
+Store % of Region Revenue =
+VAR vStoreRev = [Total Revenue]
+VAR vRegionRev = CALCULATE( [Total Revenue], ALLEXCEPT( Stores, Stores[region] ) )
+RETURN IF( ISBLANK( vStoreRev ), BLANK(), DIVIDE( vStoreRev, vRegionRev ) )
+
+// ---------- Dynamic (field parameter / What-If) ----------
+
+Dynamic Chart Title =
+VAR vMetricName = SELECTEDVALUE( 'Performance Metric Parameter'[Performance Metric Parameter], "Performance" )
+VAR vRegionName = SELECTEDVALUE( Stores[region], "All Regions" )
+RETURN vRegionName & " - Store Rankings by " & vMetricName
+
+Adjusted Gross Margin % =
+VAR vBaseMargin = [Gross Margin %]
+VAR vImprovementPct = 'Margin Improvement %'[Margin Improvement % Value] / 100
+RETURN IF( ISBLANK( vBaseMargin ), BLANK(), vBaseMargin + vImprovementPct )
+
+// ---------- Enterprise Zone restatement (Section H) ----------
+
+EZ Adjusted Cost =
+SUMX(
+    Sales,
+    VAR vCost = Sales[cost_gbp]
+    VAR vIsEZ = RELATED( Stores[enterprise_zone] )
+    VAR vReliefPct = RELATED( Stores[ez_tax_relief_pct] ) / 100
+    RETURN IF( vIsEZ, vCost * ( 1 - vReliefPct ), vCost )
 )
 
-Total Salary Cost =
-CALCULATE(SUM(Employees[salary_gbp]), Employees[IsActive] = TRUE())
+EZ Adjusted Gross Profit =
+VAR vRevenue = [Total Revenue]
+VAR vAdjCost = [EZ Adjusted Cost]
+RETURN vRevenue - vAdjCost
 
-Avg Salary =
-CALCULATE(AVERAGE(Employees[salary_gbp]), Employees[IsActive] = TRUE())
+EZ Adjusted Gross Margin % =
+VAR vRevenue = [Total Revenue]
+VAR vAdjProfit = [EZ Adjusted Gross Profit]
+RETURN IF( vRevenue = 0, BLANK(), DIVIDE( vAdjProfit, vRevenue ) )
 
-// ---------- Performance ----------
+EZ Relief Impact (ppts) =
+VAR vAdjMargin = [EZ Adjusted Gross Margin %]
+VAR vBaseMargin = [Gross Margin %]
+RETURN IF( ISBLANK( vAdjMargin ), BLANK(), vAdjMargin - vBaseMargin )
 
-Avg Performance Rating = AVERAGE(Performance[performance_rating])
+Store Margin Rank - EZ Adjusted (Region) =
+VAR vAdjMargin = [EZ Adjusted Gross Margin %]
+RETURN
+    IF( ISBLANK( vAdjMargin ), BLANK(),
+        RANKX( ALLEXCEPT( Stores, Stores[region] ), [EZ Adjusted Gross Margin %], vAdjMargin, DESC, DENSE ) )
 
-High Performer % =
-DIVIDE(
-    COUNTROWS(FILTER(Performance, Performance[performance_rating] >= 4)),
-    COUNTROWS(Performance),
-    0
-)
+Is Bottom Quartile - EZ Adjusted =
+VAR vRank = [Store Margin Rank - EZ Adjusted (Region)]
+VAR vStoreCount = CALCULATE( DISTINCTCOUNT( Stores[store_id] ), ALLEXCEPT( Stores, Stores[region] ) )
+VAR vThreshold = CEILING( vStoreCount * 0.25, 1 )
+RETURN IF( vRank >= vStoreCount - vThreshold + 1, TRUE(), FALSE() )
 
-Bonus Eligible Count =
-COUNTROWS(FILTER(Performance, Performance[bonus_eligible] = TRUE()))
-
-Avg Target Achievement % = AVERAGE(Performance[target_achievement_pct])
-
-// ---------- Attendance ----------
-
-Avg Attendance Rate % = AVERAGE(Attendance[attendance_pct])
-
-Total Days Absent = SUM(Attendance[days_absent])
-
-Avg Days Absent Per Employee =
-DIVIDE([Total Days Absent], [Active Headcount], 0)
-
-// ---------- Training ----------
-
-Training Cert Rate % =
-DIVIDE(
-    COUNTROWS(FILTER(Training, Training[certified] = TRUE())),
-    COUNTROWS(Training),
-    0
-)
-
-Certified Completions =
-COUNTROWS(FILTER(Training, Training[certified] = TRUE()))
-
-Avg Training Score = AVERAGE(Training[score_pct])
-
-Courses Per Employee =
-DIVIDE(COUNTROWS(Training), [Active Headcount], 0)
-
-// ---------- RLS role filters (applied to Employees) ----------
-// Sales Manager:             [department] = "Sales"
-// Engineering Manager:       [department] = "Engineering"
-// Operations Manager:        [department] = "Operations"
-// Marketing Manager:         [department] = "Marketing"
-// HR and Finance Manager:    [department] = "HR and Finance"
-// Customer Service Manager:  [department] = "Customer Service"
-// CHRO:                      (no filter)
+// ---------- RLS role filters (applied to Stores) ----------
+// South East Manager:   [region] = "South East"
+// North West Manager:   [region] = "North West"
+// Midlands Manager:     [region] = "Midlands"
+// Scotland Manager:     [region] = "Scotland"
+// South West Manager:   [region] = "South West"
+// Commercial Director:  (no filter)
